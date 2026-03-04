@@ -1,0 +1,111 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum QuoteStatus {
+  DRAFT
+  SUBMITTED
+}
+
+enum ImportStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Rfq {
+  id         String   @id @default(cuid())
+  title      String
+  createdAt  DateTime @default(now())
+  quotes     Quote[]
+  importJobs ImportJob[]
+}
+
+model Supplier {
+  id         String   @id @default(cuid())
+  name       String   @unique
+  email      String?
+  createdAt  DateTime @default(now())
+  quotes     Quote[]
+  importJobs ImportJob[]
+}
+
+model Part {
+  id            String   @id @default(cuid())
+  mfgPartNumber String   @unique
+  description   String?
+  createdAt     DateTime @default(now())
+  quoteLines    QuoteLine[]
+}
+
+model Quote {
+  id         String      @id @default(cuid())
+  rfqId      String
+  supplierId String
+  status     QuoteStatus @default(DRAFT)
+  createdAt  DateTime    @default(now())
+
+  rfq        Rfq         @relation(fields: [rfqId], references: [id])
+  supplier   Supplier    @relation(fields: [supplierId], references: [id])
+  lines      QuoteLine[]
+
+  importJob  ImportJob?
+}
+
+model QuoteLine {
+  id             String   @id @default(cuid())
+  quoteId        String
+  partId         String
+  quantity       Int
+  unitPrice      Decimal  @db.Decimal(12, 2)
+  leadTimeDays   Int?
+  rowFingerprint String
+
+  quote          Quote    @relation(fields: [quoteId], references: [id])
+  part           Part     @relation(fields: [partId], references: [id])
+
+  @@unique([quoteId, rowFingerprint])
+}
+
+model ImportJob {
+  id          String       @id @default(cuid())
+  rfqId       String
+  supplierId  String
+  quoteId     String?
+  filename    String
+  fileHash    String
+  status      ImportStatus @default(PROCESSING)
+
+  totalRows   Int          @default(0)
+  successRows Int          @default(0)
+  errorRows   Int          @default(0)
+
+  startedAt   DateTime     @default(now())
+  finishedAt  DateTime?
+
+  rfq         Rfq          @relation(fields: [rfqId], references: [id])
+  supplier    Supplier     @relation(fields: [supplierId], references: [id])
+  quote       Quote?       @relation(fields: [quoteId], references: [id])
+  errors      ImportError[]
+
+  @@unique([rfqId, supplierId, fileHash])
+}
+
+model ImportError {
+  id          String   @id @default(cuid())
+  importJobId String
+  rowNumber   Int
+  field       String?
+  message     String
+  raw         Json?
+  createdAt   DateTime @default(now())
+
+  importJob   ImportJob @relation(fields: [importJobId], references: [id])
+
+  @@index([importJobId])
+}
