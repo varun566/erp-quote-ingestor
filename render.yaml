@@ -6,7 +6,7 @@ services:
     plan: free
     rootDir: api
     buildCommand: npm ci && npm run prisma:generate && npm run build
-    startCommand: sh -c "npm run prisma:migrate:deploy && npm run start"
+    startCommand: bash -lc "npm run prisma:migrate:deploy && npm run start"
     envVars:
       - key: NODE_ENV
         value: production
