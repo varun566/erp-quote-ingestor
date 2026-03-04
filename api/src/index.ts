@@ -9,34 +9,31 @@ import { parseCsv, sha256, fingerprintRow } from "./importCsv";
 const prisma = new PrismaClient();
 const app = express();
 
-app.use(cors());
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(cors(corsOrigin ? { origin: corsOrigin } : {}));
 app.use(express.json());
 app.use(morgan("dev"));
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 } // 25MB
+  limits: { fileSize: 25 * 1024 * 1024 }
 });
 
+app.get("/", (_req, res) => res.type("text").send("ERP Quote Ingestor API is running. Try /health"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// Create RFQ
 app.post("/rfqs", async (req, res) => {
   const { title } = req.body;
   if (!title || typeof title !== "string") return res.status(400).json({ error: "title_required" });
-
   const rfq = await prisma.rfq.create({ data: { title } });
   res.json(rfq);
 });
 
-// List RFQs (UI helper)
 app.get("/rfqs", async (_req, res) => {
   const rfqs = await prisma.rfq.findMany({ orderBy: { createdAt: "desc" } });
   res.json(rfqs);
 });
 
-// Import supplier quote CSV into a new Quote under an RFQ
-// multipart/form-data: rfqId, supplierName, supplierEmail(optional), file
 app.post("/imports", upload.single("file"), async (req, res) => {
   try {
     const { rfqId, supplierName, supplierEmail } = req.body;
@@ -54,7 +51,6 @@ app.post("/imports", upload.single("file"), async (req, res) => {
 
     const fileHash = sha256(req.file.buffer);
 
-    // Idempotency: same RFQ + supplier + fileHash returns existing job
     const existing = await prisma.importJob.findUnique({
       where: { rfqId_supplierId_fileHash: { rfqId, supplierId: supplier.id, fileHash } },
       include: { errors: true, quote: { include: { lines: true } } }
@@ -62,13 +58,7 @@ app.post("/imports", upload.single("file"), async (req, res) => {
     if (existing) return res.json({ idempotent: true, job: existing });
 
     const job = await prisma.importJob.create({
-      data: {
-        rfqId,
-        supplierId: supplier.id,
-        filename: req.file.originalname,
-        fileHash,
-        status: "PROCESSING"
-      }
+      data: { rfqId, supplierId: supplier.id, filename: req.file.originalname, fileHash, status: "PROCESSING" }
     });
 
     const { rows, errors } = parseCsv(req.file.buffer);
@@ -79,7 +69,6 @@ app.post("/imports", upload.single("file"), async (req, res) => {
 
     await prisma.importJob.update({ where: { id: job.id }, data: { quoteId: quote.id } });
 
-    // Store parse/validation errors
     if (errors.length) {
       await prisma.importError.createMany({
         data: errors.map((e: any) => ({
@@ -138,13 +127,7 @@ app.post("/imports", upload.single("file"), async (req, res) => {
 
     const finished = await prisma.importJob.update({
       where: { id: job.id },
-      data: {
-        status: "COMPLETED",
-        totalRows,
-        successRows,
-        errorRows,
-        finishedAt: new Date()
-      }
+      data: { status: "COMPLETED", totalRows, successRows, errorRows, finishedAt: new Date() }
     });
 
     res.json({ idempotent: false, jobId: finished.id, quoteId: quote.id });
@@ -154,7 +137,6 @@ app.post("/imports", upload.single("file"), async (req, res) => {
   }
 });
 
-// Fetch job details for UI
 app.get("/import-jobs/:id", async (req, res) => {
   const job = await prisma.importJob.findUnique({
     where: { id: req.params.id },
